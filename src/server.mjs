@@ -1,5 +1,6 @@
 import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import crypto from "node:crypto";
 import http from "node:http";
 import { openAsBlob } from "node:fs";
 import path from "node:path";
@@ -12,6 +13,7 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = path.join(ROOT, "data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
+const ADMIN_CONFIG_FILE = path.join(DATA_DIR, "admin-config.json");
 const MOCK_R2_DIR = path.join(DATA_DIR, "mock-r2");
 const MAX_BODY_BYTES = 20 * 1024 * 1024;
 
@@ -40,7 +42,13 @@ const config = {
   runningHubInputNodeId: env("RUNNINGHUB_INPUT_NODE_ID", env("METROVAN_RUNNINGHUB_DEFAULT_INPUT_NODE_ID", "61")),
   runningHubInputField: env("RUNNINGHUB_INPUT_FIELD", env("METROVAN_RUNNINGHUB_DEFAULT_INPUT_FIELD", "image")),
   runningHubInputMode: env("RUNNINGHUB_INPUT_MODE", env("METROVAN_RUNNINGHUB_DEFAULT_INPUT_MODE", "image")),
-  runningHubOutputPollSeconds: numberEnv("RUNNINGHUB_OUTPUT_POLL_SECONDS", 3600)
+  runningHubOutputNodeId: env("RUNNINGHUB_OUTPUT_NODE_ID", env("METROVAN_RUNNINGHUB_DEFAULT_OUTPUT_NODE_ID")),
+  runningHubOutputField: env("RUNNINGHUB_OUTPUT_FIELD", env("METROVAN_RUNNINGHUB_DEFAULT_OUTPUT_FIELD", "output")),
+  runningHubOutputMode: env("RUNNINGHUB_OUTPUT_MODE", env("METROVAN_RUNNINGHUB_DEFAULT_OUTPUT_MODE", "file")),
+  runningHubOutputPollSeconds: numberEnv("RUNNINGHUB_OUTPUT_POLL_SECONDS", 3600),
+  adminPin: env("ADMIN_PIN", env("METROVAN_ADMIN_PIN")),
+  adminSessionSecret: env("ADMIN_SESSION_SECRET", env("METROVAN_ADMIN_SESSION_SECRET", env("ADMIN_PIN", env("METROVAN_ADMIN_PIN")))),
+  adminSessionTtlSeconds: numberEnv("ADMIN_SESSION_TTL_SECONDS", 60 * 60 * 6)
 };
 
 const s3 = createS3Client();
@@ -68,6 +76,36 @@ function readDb() {
 
 function writeDb(db) {
   writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+}
+
+function defaultAdminConfig() {
+  return {
+    runningHub: {
+      apiKey: "",
+      workflowId: "",
+      instanceType: "",
+      inputNodeId: "",
+      inputField: "",
+      inputMode: "",
+      outputNodeId: "",
+      outputField: "",
+      outputMode: ""
+    },
+    updatedAt: null
+  };
+}
+
+function readAdminConfig() {
+  if (!existsSync(ADMIN_CONFIG_FILE)) return defaultAdminConfig();
+  try {
+    return { ...defaultAdminConfig(), ...JSON.parse(readFileSync(ADMIN_CONFIG_FILE, "utf8")) };
+  } catch {
+    return defaultAdminConfig();
+  }
+}
+
+function writeAdminConfig(adminConfig) {
+  writeFileSync(ADMIN_CONFIG_FILE, JSON.stringify(adminConfig, null, 2));
 }
 
 function sendJson(res, status, data) {
@@ -145,6 +183,28 @@ async function handleApi(req, res, pathname) {
     runningHubMode: config.runningHubMock ? "mock" : "runninghub"
   });
 
+  if (req.method === "POST" && pathname === "/api/admin/login") {
+    return adminLogin(req, res);
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/config") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    return sendJson(res, 200, getAdminPublicConfig());
+  }
+
+  if (req.method === "PATCH" && pathname === "/api/admin/runninghub") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    return updateRunningHubAdminConfig(req, res);
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/test-runninghub") {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    return testRunningHubAdminConfig(res);
+  }
+
   if (req.method === "GET" && pathname === "/api/projects") {
     return sendJson(res, 200, { projects: readDb().projects });
   }
@@ -210,6 +270,95 @@ async function handleApi(req, res, pathname) {
   }
 
   return sendJson(res, 404, { error: "Not found" });
+}
+
+async function adminLogin(req, res) {
+  if (!config.adminPin || !config.adminSessionSecret) {
+    return sendJson(res, 503, { error: "Admin is not configured." });
+  }
+  const body = await readJsonBody(req);
+  const pin = String(body.pin ?? "");
+  if (!safeEqual(pin, config.adminPin)) {
+    return sendJson(res, 401, { error: "管理员 PIN 不正确。" });
+  }
+  return sendJson(res, 200, {
+    token: createAdminToken(),
+    expiresIn: config.adminSessionTtlSeconds
+  });
+}
+
+function requireAdmin(req, res) {
+  const authorization = String(req.headers.authorization ?? "");
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  if (!verifyAdminToken(token)) {
+    sendJson(res, 401, { error: "需要管理员验证。" });
+    return null;
+  }
+  return { ok: true };
+}
+
+function getAdminPublicConfig() {
+  const runningHub = getRunningHubConfig();
+  return {
+    r2: {
+      configured: Boolean(config.r2Bucket && config.r2AccessKeyId && config.r2SecretAccessKey && (config.r2Endpoint || config.r2AccountId)),
+      mode: config.r2Mock ? "mock" : "r2",
+      bucket: redactMiddle(config.r2Bucket),
+      keyPrefix: config.r2KeyPrefix
+    },
+    runningHub: {
+      configured: Boolean(runningHub.apiKey && runningHub.workflowId && runningHub.inputNodeId && runningHub.inputField),
+      mode: config.runningHubMock ? "mock" : "runninghub",
+      apiKeyConfigured: Boolean(runningHub.apiKey),
+      workflowId: runningHub.workflowId,
+      instanceType: runningHub.instanceType,
+      inputNodeId: runningHub.inputNodeId,
+      inputField: runningHub.inputField,
+      inputMode: runningHub.inputMode,
+      outputNodeId: runningHub.outputNodeId,
+      outputField: runningHub.outputField,
+      outputMode: runningHub.outputMode
+    }
+  };
+}
+
+async function updateRunningHubAdminConfig(req, res) {
+  const body = await readJsonBody(req);
+  const adminConfig = readAdminConfig();
+  const current = adminConfig.runningHub ?? {};
+  const next = { ...current };
+  for (const key of [
+    "workflowId",
+    "instanceType",
+    "inputNodeId",
+    "inputField",
+    "inputMode",
+    "outputNodeId",
+    "outputField",
+    "outputMode"
+  ]) {
+    if (body[key] !== undefined) next[key] = String(body[key] ?? "").trim();
+  }
+  if (body.apiKey !== undefined && String(body.apiKey).trim()) {
+    next.apiKey = String(body.apiKey).trim();
+  }
+  adminConfig.runningHub = next;
+  adminConfig.updatedAt = new Date().toISOString();
+  writeAdminConfig(adminConfig);
+  return sendJson(res, 200, getAdminPublicConfig());
+}
+
+function testRunningHubAdminConfig(res) {
+  const runningHub = getRunningHubConfig();
+  const missing = [];
+  for (const key of ["apiKey", "workflowId", "inputNodeId", "inputField"]) {
+    if (!runningHub[key]) missing.push(key);
+  }
+  return sendJson(res, missing.length ? 400 : 200, {
+    ok: missing.length === 0,
+    missing,
+    message: missing.length ? "RunningHub 配置不完整。" : "RunningHub 基础配置已就绪。"
+  });
 }
 
 async function createUploadTargets(req, res, projectId) {
@@ -360,6 +509,7 @@ function queueMockJob(jobId) {
 }
 
 async function queueRunningHubJob(jobId) {
+  const runningHubConfig = getRunningHubConfig();
   const db = readDb();
   const job = db.jobs.find(entry => entry.id === jobId);
   if (!job) return;
@@ -367,7 +517,7 @@ async function queueRunningHubJob(jobId) {
   job.updatedAt = new Date().toISOString();
   writeDb(db);
 
-  ensureRunningHubConfigured();
+  ensureRunningHubConfigured(runningHubConfig);
 
   for (const item of job.items) {
     const currentDb = readDb();
@@ -383,10 +533,10 @@ async function queueRunningHubJob(jobId) {
 
     try {
       const originalPath = await stageObjectToTempFile(asset.originalStorageKey, asset.fileName);
-      const upload = await uploadFileToRunningHub(originalPath);
-      const taskId = await createRunningHubTask(upload);
+      const upload = await uploadFileToRunningHub(originalPath, runningHubConfig);
+      const taskId = await createRunningHubTask(upload, runningHubConfig);
       await updateJobItem(jobId, item.assetId, { progress: 0.35, runningHubTaskId: taskId });
-      const outputUrls = await waitRunningHubTask(taskId, async progress => {
+      const outputUrls = await waitRunningHubTask(taskId, runningHubConfig, async progress => {
         await updateJobItem(jobId, item.assetId, { progress });
       });
       const outputUrl = outputUrls[0];
@@ -584,7 +734,7 @@ async function downloadUrlToFile(url, targetPath) {
   await writeFile(targetPath, Buffer.from(await response.arrayBuffer()));
 }
 
-async function uploadFileToRunningHub(filePath) {
+async function uploadFileToRunningHub(filePath, runningHubConfig) {
   const endpoints = [
     { mode: "new", url: "https://www.runninghub.cn/openapi/v2/media/upload/binary" },
     { mode: "legacy", url: "https://www.runninghub.cn/task/openapi/upload" }
@@ -594,7 +744,7 @@ async function uploadFileToRunningHub(filePath) {
     try {
       const form = new FormData();
       if (endpoint.mode === "legacy") {
-        form.append("apiKey", config.runningHubApiKey);
+        form.append("apiKey", runningHubConfig.apiKey);
         form.append("fileType", "input");
       }
       const blob = await openAsBlob(filePath);
@@ -602,7 +752,7 @@ async function uploadFileToRunningHub(filePath) {
       const response = await fetch(endpoint.url, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${config.runningHubApiKey}`,
+          Authorization: `Bearer ${runningHubConfig.apiKey}`,
           Accept: "application/json"
         },
         body: form
@@ -621,27 +771,27 @@ async function uploadFileToRunningHub(filePath) {
   throw new Error(`RunningHub upload failed: ${lastError?.message || lastError}`);
 }
 
-async function createRunningHubTask(upload) {
+async function createRunningHubTask(upload, runningHubConfig) {
   const nodeInfoList = [
     {
-      nodeId: config.runningHubInputNodeId,
-      fieldName: config.runningHubInputField,
-      field: config.runningHubInputField,
-      fieldValue: runningHubInputValue(upload)
+      nodeId: runningHubConfig.inputNodeId,
+      fieldName: runningHubConfig.inputField,
+      field: runningHubConfig.inputField,
+      fieldValue: runningHubInputValue(upload, runningHubConfig)
     }
   ];
   const response = await fetch("https://www.runninghub.cn/task/openapi/create", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.runningHubApiKey}`,
+      Authorization: `Bearer ${runningHubConfig.apiKey}`,
       Accept: "application/json"
     },
     body: JSON.stringify({
-      apiKey: config.runningHubApiKey,
-      workflowId: config.runningHubWorkflowId,
+      apiKey: runningHubConfig.apiKey,
+      workflowId: runningHubConfig.workflowId,
       nodeInfoList,
-      ...(config.runningHubInstanceType ? { instanceType: config.runningHubInstanceType } : {})
+      ...(runningHubConfig.instanceType ? { instanceType: runningHubConfig.instanceType } : {})
     })
   });
   const parsed = await parseRunningHubResponse(response);
@@ -651,10 +801,10 @@ async function createRunningHubTask(upload) {
   return taskId;
 }
 
-async function waitRunningHubTask(taskId, onProgress) {
-  const deadline = Date.now() + config.runningHubOutputPollSeconds * 1000;
+async function waitRunningHubTask(taskId, runningHubConfig, onProgress) {
+  const deadline = Date.now() + runningHubConfig.outputPollSeconds * 1000;
   while (Date.now() < deadline) {
-    const status = await getRunningHubStatus(taskId);
+    const status = await getRunningHubStatus(taskId, runningHubConfig);
     const normalized = status.status.toLowerCase();
     if (status.progress > 0) {
       await onProgress(Math.max(0.35, Math.min(0.9, status.progress / 100)));
@@ -667,22 +817,22 @@ async function waitRunningHubTask(taskId, onProgress) {
   }
 
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    const outputs = await getRunningHubOutputs(taskId);
+    const outputs = await getRunningHubOutputs(taskId, runningHubConfig);
     if (outputs.length) return outputs;
     await sleep(Math.min(15000, 3000 + attempt * 1000));
   }
   throw new Error("RunningHub outputs are not ready.");
 }
 
-async function getRunningHubStatus(taskId) {
+async function getRunningHubStatus(taskId, runningHubConfig) {
   const response = await fetch("https://www.runninghub.cn/task/openapi/status", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.runningHubApiKey}`,
+      Authorization: `Bearer ${runningHubConfig.apiKey}`,
       Accept: "application/json"
     },
-    body: JSON.stringify({ apiKey: config.runningHubApiKey, taskId })
+    body: JSON.stringify({ apiKey: runningHubConfig.apiKey, taskId })
   });
   const parsed = await parseRunningHubResponse(response);
   const data = asRecord(parsed.data);
@@ -692,7 +842,7 @@ async function getRunningHubStatus(taskId) {
   };
 }
 
-async function getRunningHubOutputs(taskId) {
+async function getRunningHubOutputs(taskId, runningHubConfig) {
   const endpoints = ["outputs", "output", "result", "results"];
   let lastError;
   for (const endpoint of endpoints) {
@@ -701,10 +851,10 @@ async function getRunningHubOutputs(taskId) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${config.runningHubApiKey}`,
+          Authorization: `Bearer ${runningHubConfig.apiKey}`,
           Accept: "application/json"
         },
-        body: JSON.stringify({ apiKey: config.runningHubApiKey, taskId })
+        body: JSON.stringify({ apiKey: runningHubConfig.apiKey, taskId })
       });
       const parsed = await parseRunningHubResponse(response);
       return extractFileUrls(parsed);
@@ -724,8 +874,8 @@ async function parseRunningHubResponse(response) {
   return parsed;
 }
 
-function runningHubInputValue(upload) {
-  const mode = config.runningHubInputMode.toLowerCase();
+function runningHubInputValue(upload, runningHubConfig) {
+  const mode = runningHubConfig.inputMode.toLowerCase();
   if (mode.includes("url") || mode.includes("link")) return upload.fileUrl || upload.fileId || upload.fileName;
   if (mode.includes("id")) return upload.fileId || upload.fileName || upload.fileUrl;
   return upload.fileName || upload.fileId || upload.fileUrl;
@@ -756,6 +906,62 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function getRunningHubConfig() {
+  const adminConfig = readAdminConfig().runningHub ?? {};
+  return {
+    apiKey: firstNonEmpty(adminConfig.apiKey, config.runningHubApiKey),
+    workflowId: firstNonEmpty(adminConfig.workflowId, config.runningHubWorkflowId),
+    instanceType: firstNonEmpty(adminConfig.instanceType, config.runningHubInstanceType),
+    inputNodeId: firstNonEmpty(adminConfig.inputNodeId, config.runningHubInputNodeId),
+    inputField: firstNonEmpty(adminConfig.inputField, config.runningHubInputField),
+    inputMode: firstNonEmpty(adminConfig.inputMode, config.runningHubInputMode, "image"),
+    outputNodeId: firstNonEmpty(adminConfig.outputNodeId, config.runningHubOutputNodeId),
+    outputField: firstNonEmpty(adminConfig.outputField, config.runningHubOutputField),
+    outputMode: firstNonEmpty(adminConfig.outputMode, config.runningHubOutputMode, "file"),
+    outputPollSeconds: config.runningHubOutputPollSeconds
+  };
+}
+
+function createAdminToken() {
+  const expiresAt = Math.floor(Date.now() / 1000) + config.adminSessionTtlSeconds;
+  const payload = base64UrlEncode(JSON.stringify({ scope: "admin", expiresAt }));
+  const signature = signAdminPayload(payload);
+  return `${payload}.${signature}`;
+}
+
+function verifyAdminToken(token) {
+  if (!token || !config.adminSessionSecret) return false;
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature || !safeEqual(signature, signAdminPayload(payload))) return false;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return parsed.scope === "admin" && Number(parsed.expiresAt) > Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
+}
+
+function signAdminPayload(payload) {
+  return crypto.createHmac("sha256", config.adminSessionSecret).update(payload).digest("base64url");
+}
+
+function base64UrlEncode(value) {
+  return Buffer.from(value).toString("base64url");
+}
+
+function safeEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function redactMiddle(value) {
+  const text = String(value ?? "");
+  if (text.length <= 8) return text ? "••••" : "";
+  return `${text.slice(0, 4)}••••${text.slice(-4)}`;
+}
+
 function createS3Client() {
   if (boolEnv("R2_MOCK", true)) return null;
   const endpoint = config.r2Endpoint || (config.r2AccountId ? `https://${config.r2AccountId}.r2.cloudflarestorage.com` : "");
@@ -778,10 +984,10 @@ function ensureR2Configured() {
   if (missing.length) throw Object.assign(new Error(`R2 is not configured: ${missing.join(", ")}`), { status: 500 });
 }
 
-function ensureRunningHubConfigured() {
+function ensureRunningHubConfigured(runningHubConfig = getRunningHubConfig()) {
   const missing = [];
-  for (const key of ["runningHubApiKey", "runningHubWorkflowId", "runningHubInputNodeId", "runningHubInputField"]) {
-    if (!config[key]) missing.push(key);
+  for (const key of ["apiKey", "workflowId", "inputNodeId", "inputField"]) {
+    if (!runningHubConfig[key]) missing.push(key);
   }
   if (missing.length) throw Object.assign(new Error(`RunningHub is not configured: ${missing.join(", ")}`), { status: 500 });
 }

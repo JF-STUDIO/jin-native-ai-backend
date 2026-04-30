@@ -2,5 +2,6 @@
 .env.local
 node_modules/
 data/
+admin-credentials.txt
 .DS_Store
 npm-debug.log*
