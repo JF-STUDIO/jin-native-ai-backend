@@ -4,6 +4,12 @@ This is the minimal backend for the native iOS app photo retouch workflow.
 
 The iPhone app should never store R2 credentials or a RunningHub API key. It only talks to this backend.
 
+Current independent Render service:
+
+```text
+https://jin-native-ai-backend.onrender.com
+```
+
 ## Flow
 
 ```text
