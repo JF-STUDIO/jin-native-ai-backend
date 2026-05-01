@@ -586,7 +586,7 @@ async function markJobItemCompleted(jobId, assetId, resultKey) {
   asset.updatedAt = new Date().toISOString();
   item.status = "completed";
   item.progress = 1;
-  item.resultUrl = createPublicGetUrl(resultKey);
+  item.resultUrl = await createReadableObjectUrl(resultKey);
   job.completed = job.items.filter(entry => entry.status === "completed").length;
   job.failed = job.items.filter(entry => entry.status === "failed").length;
   job.updatedAt = new Date().toISOString();
@@ -689,6 +689,10 @@ function createPublicGetUrl(storageKey) {
   if (config.r2Mock) return `${config.publicApiBaseUrl}/mock-r2/${encodeURIComponent(storageKey)}`;
   if (config.r2PublicBaseUrl) return `${config.r2PublicBaseUrl.replace(/\/$/, "")}/${storageKey}`;
   return null;
+}
+
+async function createReadableObjectUrl(storageKey) {
+  return createPublicGetUrl(storageKey) || await createSignedGetUrl(storageKey);
 }
 
 async function copyMockObject(sourceKey, resultKey) {
