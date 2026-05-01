@@ -47,6 +47,7 @@ const config = {
   runningHubOutputMode: env("RUNNINGHUB_OUTPUT_MODE", env("METROVAN_RUNNINGHUB_DEFAULT_OUTPUT_MODE", "file")),
   runningHubOutputPollSeconds: numberEnv("RUNNINGHUB_OUTPUT_POLL_SECONDS", 3600),
   adminPin: env("ADMIN_PIN", env("METROVAN_ADMIN_PIN")),
+  adminEmails: env("ADMIN_EMAILS", env("METROVAN_ADMIN_EMAILS")).split(",").map(value => value.trim().toLowerCase()).filter(Boolean),
   adminSessionSecret: env("ADMIN_SESSION_SECRET", env("METROVAN_ADMIN_SESSION_SECRET", env("ADMIN_PIN", env("METROVAN_ADMIN_PIN")))),
   adminSessionTtlSeconds: numberEnv("ADMIN_SESSION_TTL_SECONDS", 60 * 60 * 6)
 };
@@ -277,13 +278,18 @@ async function adminLogin(req, res) {
     return sendJson(res, 503, { error: "Admin is not configured." });
   }
   const body = await readJsonBody(req);
+  const email = String(body.email ?? "").trim().toLowerCase();
   const pin = String(body.pin ?? "");
+  if (config.adminEmails.length && !config.adminEmails.includes(email)) {
+    return sendJson(res, 401, { error: "该账号不是管理员。" });
+  }
   if (!safeEqual(pin, config.adminPin)) {
     return sendJson(res, 401, { error: "管理员 PIN 不正确。" });
   }
   return sendJson(res, 200, {
     token: createAdminToken(),
-    expiresIn: config.adminSessionTtlSeconds
+    expiresIn: config.adminSessionTtlSeconds,
+    role: "admin"
   });
 }
 
