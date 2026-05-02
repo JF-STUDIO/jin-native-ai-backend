@@ -1,0 +1,64 @@
+services:
+  - type: web
+    name: jin-native-ai-backend
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: PUBLIC_API_BASE_URL
+        value: https://jin-native-ai-backend.onrender.com
+      - key: R2_MOCK
+        value: false
+      - key: RUNNINGHUB_MOCK
+        value: false
+      - key: APPLE_BUNDLE_ID
+        value: com.jin.realestatemarketing
+      - key: APPLE_IAP_VALIDATION_MODE
+        value: strict
+      - key: DEFAULT_STARTING_CREDITS
+        value: 0
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_REGION
+        value: auto
+      - key: R2_KEY_PREFIX
+        value: native-app
+      - key: RUNNINGHUB_API_KEY
+        sync: false
+      - key: RUNNINGHUB_WORKFLOW_ID
+        sync: false
+      - key: RUNNINGHUB_INSTANCE_TYPE
+        value: plus
+      - key: RUNNINGHUB_INPUT_NODE_ID
+        sync: false
+      - key: RUNNINGHUB_INPUT_FIELD
+        value: image
+      - key: RUNNINGHUB_INPUT_MODE
+        value: image
+      - key: RUNNINGHUB_OUTPUT_NODE_ID
+        sync: false
+      - key: RUNNINGHUB_OUTPUT_FIELD
+        value: output
+      - key: RUNNINGHUB_OUTPUT_MODE
+        value: file
+      - key: RUNNINGHUB_OUTPUT_POLL_SECONDS
+        value: 3600
+      - key: ADMIN_EMAILS
+        value: zhoujin0618@gmail.com
+      - key: ADMIN_PIN
+        sync: false
+      - key: ADMIN_SESSION_SECRET
+        sync: false
+      - key: ADMIN_SESSION_TTL_SECONDS
+        value: 21600

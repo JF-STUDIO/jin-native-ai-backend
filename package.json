@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node src/server.mjs",
     "dev": "node src/server.mjs",
-    "check": "node --check src/server.mjs"
+    "check": "node --check src/server.mjs && node --check scripts/check-production-config.mjs && node --check scripts/verify-live-backend.mjs",
+    "check:production": "node scripts/check-production-config.mjs",
+    "verify:live": "node scripts/verify-live-backend.mjs",
+    "package:deploy": "node scripts/create-deploy-package.mjs"
   },
   "engines": {
     "node": ">=22"
