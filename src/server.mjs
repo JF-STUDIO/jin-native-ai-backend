@@ -46,6 +46,9 @@ const config = {
   runningHubOutputField: env("RUNNINGHUB_OUTPUT_FIELD", env("METROVAN_RUNNINGHUB_DEFAULT_OUTPUT_FIELD", "output")),
   runningHubOutputMode: env("RUNNINGHUB_OUTPUT_MODE", env("METROVAN_RUNNINGHUB_DEFAULT_OUTPUT_MODE", "file")),
   runningHubOutputPollSeconds: numberEnv("RUNNINGHUB_OUTPUT_POLL_SECONDS", 3600),
+  openAiApiKey: env("OPENAI_API_KEY", env("AI_IMAGE_API_KEY")),
+  openAiImageModel: env("OPENAI_IMAGE_MODEL", env("AI_IMAGE_MODEL", "gpt-image-2")),
+  openAiImageQuality: env("OPENAI_IMAGE_QUALITY", "high"),
   bundleId: env("APPLE_BUNDLE_ID", "com.jin.realestatemarketing"),
   iapValidationMode: env("APPLE_IAP_VALIDATION_MODE", "decode").toLowerCase(),
   defaultStartingCredits: numberEnv("DEFAULT_STARTING_CREDITS", 0),
@@ -61,6 +64,33 @@ const IAP_PRODUCTS = {
   "com.jinrealestate.credits.100": { credits: 100, type: "consumable" }
 };
 
+const MATERIAL_TEMPLATES = {
+  "business-card": {
+    title: "经纪人名片",
+    size: "1536x1024",
+    page: { width: 792, height: 612 },
+    prompt: "Create one flat, print-ready horizontal North American real estate agent business card, premium but restrained. Use a clean editorial grid, large readable typography, refined spacing, and a trustworthy professional tone. Include only the provided name, title, brokerage/company, phone, email, website, WeChat if provided, and license number if provided. If no logo is supplied, use a simple typographic monogram derived from the agent name. Do not invent awards, claims, QR codes, REALTOR/MLS marks, brokerage logos, addresses, or extra contact details."
+  },
+  "agent-profile": {
+    title: "个人宣传页",
+    size: "1024x1536",
+    page: { width: 612, height: 792 },
+    prompt: "Create one flat, print-ready Letter portrait Realtor personal profile flyer for the North American market. The design should feel polished, affluent, and approachable, with sections for agent introduction, service areas/languages if mentioned, brokerage/company, contact information, website, WeChat if provided, and license number if provided. Use tasteful real estate marketing styling with whitespace, elegant typography, and a professional portrait/logo-safe area if reference material suggests one. Do not invent awards, sales volume, guarantees, REALTOR/MLS marks, or fake brokerage branding."
+  },
+  "just-listed": {
+    title: "Just Listed 传单",
+    size: "1024x1536",
+    page: { width: 612, height: 792 },
+    prompt: "Create one flat, print-ready Letter portrait Just Listed real estate flyer for the North American market. Make the address, price, property facts, and key highlights the main hierarchy. Use a premium listing-ad layout with a strong hero area, refined color palette, clear call to action, and agent contact block. If real property photos are not provided, use tasteful abstract real-estate graphic areas or image placeholders rather than depicting a specific fake home. Do not invent property facts, MLS numbers, open house times, guarantees, REALTOR/MLS marks, or claims not supplied."
+  },
+  "open-house": {
+    title: "Open House 邀请",
+    size: "1024x1536",
+    page: { width: 612, height: 792 },
+    prompt: "Create one flat, print-ready Letter portrait Open House invitation flyer for the North American market. Use a welcoming luxury-real-estate layout with a clear event section, address, price and property facts if supplied, key highlights, and agent contact block. If event date/time is supplied, feature it prominently; otherwise omit any specific date/time and use a neutral invitation message. Do not invent dates, MLS numbers, property features, guarantees, REALTOR/MLS marks, or extra contact details."
+  }
+};
+
 const APPLE_ROOT_CA_SHA256_FINGERPRINTS = new Set([
   "63343ABFB89A6A03EBB57E9B3F5FA7BE7C4F5C756F3017B3A8C488C3653E9179"
 ]);
@@ -72,6 +102,7 @@ function defaultDb() {
     projects: [],
     assets: [],
     jobs: [],
+    materials: [],
     accounts: [],
     creditLedger: [],
     iapTransactions: []
@@ -162,7 +193,7 @@ function legalPage(kind, baseUrl = config.publicApiBaseUrl.replace(/\/$/, "")) {
       intro: "本政策说明经纪营销助手如何处理经纪人资料、房源信息、上传照片、生成内容、购买与积分记录。",
       sections: [
         ["我们收集的数据", "您主动填写的经纪人姓名、公司、联系方式、执照号；房源地址、价格、面积、备注；您选择上传的照片、Logo、头像、PDF 或参考素材；App 自动生成的账号标识、积分账本、生成任务记录和购买交易标识。"],
-        ["云端 AI 处理", "当您选择 AI 照片精修时，所选照片会上传至我们的云端服务，并可能由合作的云存储与 AI 处理服务提供商处理。本机生成的房源视频和 PDF 物料不会为了生成而上传到云端。我们不会在用户界面披露具体供应商名称，也不会将上传素材用于与本功能无关的广告或数据交易。"],
+        ["云端 AI 处理", "当您选择 AI 照片精修或 AI 营销物料生成时，所选照片、参考素材和您填写的经纪人/房源信息会上传至我们的云端服务，并可能由合作的云存储与 AI 处理服务提供商处理。房源视频仍在本机生成。我们不会在用户界面披露具体供应商名称，也不会将上传素材用于与本功能无关的广告或数据交易。"],
         ["使用目的", "我们使用这些数据来完成 AI 照片精修、保存生成结果、提供积分和订阅服务、排查故障、保护服务安全、响应用户支持与删除请求。"],
         ["第三方共享", "我们只在完成服务所需范围内与云存储、AI 处理、Apple In-App Purchase 和基础设施服务提供商共享必要数据。我们要求相关服务提供商按照合理的安全和保密要求处理数据。"],
         ["保存与删除", "本机资料保存在您的设备上。云端上传素材、生成任务和积分账本会保留用于完成服务、排查问题和用户再次访问；您可以在 App 的“我的 > 隐私政策与条款”中删除云端账号数据。删除后，已上传素材、生成任务和自动账号关联记录会从我们的服务中删除，法律或财务合规必须保留的购买记录除外。"],
@@ -178,7 +209,7 @@ function legalPage(kind, baseUrl = config.publicApiBaseUrl.replace(/\/$/, "")) {
         ["用户责任", "您必须确认自己有权上传和使用房源照片、Logo、头像、参考文件和房源信息。AI 生成内容可能包含错误，发布前必须由您核对电话、邮箱、网站、执照信息和当地广告合规要求；涉及房源资料时还需核对地址、价格、面积和 MLS 描述。"],
         ["禁止用途", "不得上传违法、侵权、误导性、歧视性或未经授权的素材；不得使用本服务生成虚假房源信息、保证收益、保证成交或其他违反房地产广告规则的内容。"],
         ["订阅与积分", "数字生成服务通过 Apple In-App Purchase 购买。订阅取消、退款和账单由 Apple 管理。删除 App 内账号数据不会自动取消 Apple 订阅。"],
-        ["服务可用性", "AI 处理依赖云端服务，可能受到网络、第三方服务、素材质量和工作流配置影响。我们会尽力保持服务可用，但不保证任何生成结果一定适合发布或商业使用。"],
+        ["服务可用性", "AI 处理依赖云端服务，可能受到网络、第三方服务、素材质量、提示词和配置影响。我们会尽力保持服务可用，但不保证任何生成结果一定适合发布或商业使用。"],
         ["联系我们", "如需支持，请联系 zhoujin0618@gmail.com。"]
       ]
     },
@@ -324,6 +355,7 @@ async function handleApi(req, res, pathname) {
     ok: true,
     storageMode: config.r2Mock ? "mock" : "cloud",
     aiProcessingMode: config.runningHubMock ? "mock" : "cloud",
+    materialGenerationMode: config.openAiApiKey ? "cloud" : "not_configured",
     iapValidationMode: config.iapValidationMode
   });
 
@@ -358,6 +390,10 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "POST" && pathname === "/api/apple/notifications") {
     return recordAppleServerNotification(req, res);
+  }
+
+  if (req.method === "POST" && pathname === "/api/materials/generate") {
+    return generateMarketingMaterial(req, res);
   }
 
   if (req.method === "POST" && pathname === "/api/admin/login") {
@@ -556,10 +592,15 @@ async function deleteAccountData(req, res) {
   const db = readDb();
   const assets = db.assets.filter(asset => asset.accountId === account.id || asset.appAccountToken === account.appAccountToken);
   const jobs = db.jobs.filter(job => job.accountId === account.id || job.appAccountToken === account.appAccountToken);
+  const materials = db.materials.filter(material => material.accountId === account.id || material.appAccountToken === account.appAccountToken);
   const storageKeys = new Set();
   for (const asset of assets) {
     if (asset.originalStorageKey) storageKeys.add(asset.originalStorageKey);
     if (asset.resultStorageKey) storageKeys.add(asset.resultStorageKey);
+  }
+  for (const material of materials) {
+    if (material.imageStorageKey) storageKeys.add(material.imageStorageKey);
+    if (material.pdfStorageKey) storageKeys.add(material.pdfStorageKey);
   }
 
   const deleteErrors = [];
@@ -573,6 +614,7 @@ async function deleteAccountData(req, res) {
 
   db.assets = db.assets.filter(asset => asset.accountId !== account.id && asset.appAccountToken !== account.appAccountToken);
   db.jobs = db.jobs.filter(job => job.accountId !== account.id && job.appAccountToken !== account.appAccountToken);
+  db.materials = db.materials.filter(material => material.accountId !== account.id && material.appAccountToken !== account.appAccountToken);
   db.projects = db.projects.filter(project => project.accountId !== account.id && project.appAccountToken !== account.appAccountToken);
   db.creditLedger = db.creditLedger.filter(entry => entry.accountId !== account.id);
   db.iapTransactions = db.iapTransactions.filter(entry => entry.accountId !== account.id);
@@ -584,6 +626,7 @@ async function deleteAccountData(req, res) {
     deleted: {
       assets: assets.length,
       jobs: jobs.length,
+      materials: materials.length,
       storageObjects: storageKeys.size
     },
     errors: deleteErrors
@@ -731,6 +774,339 @@ async function recordAppleServerNotification(req, res) {
   } catch (error) {
     return sendJson(res, error.status || 400, { error: error.message || "Invalid notification" });
   }
+}
+
+async function generateMarketingMaterial(req, res) {
+  const account = getRequiredAccount(req, res);
+  if (!account) return;
+  ensureOpenAiConfigured();
+
+  const body = await readJsonBody(req);
+  const templateId = normalizeMaterialTemplateId(body.templateId || body.templateTitle);
+  const template = MATERIAL_TEMPLATES[templateId];
+  if (!template) return sendJson(res, 400, { error: "Unknown material template." });
+
+  const property = asRecord(body.property) || {};
+  if (["just-listed", "open-house"].includes(templateId) && !compactText(property.address)) {
+    return sendJson(res, 400, { error: "Property address is required for this material." });
+  }
+
+  const reference = readMaterialReference(body.reference);
+  const prompt = buildMaterialPrompt({ templateId, template, body, reference });
+  const imageBuffer = reference?.buffer
+    ? await createOpenAiImageEdit({ prompt, template, reference, user: account.id })
+    : await createOpenAiImageGeneration({ prompt, template, user: account.id });
+  if (!isJpegBuffer(imageBuffer)) {
+    throw Object.assign(new Error("Image generation returned a non-JPEG file."), { status: 502 });
+  }
+
+  const materialId = id("material");
+  const now = new Date().toISOString();
+  const userPath = `users/${account.id}`;
+  const baseKey = [config.r2KeyPrefix, userPath, "materials", materialId].filter(Boolean).join("/");
+  const imageStorageKey = `${baseKey}/image.jpg`;
+  const pdfStorageKey = `${baseKey}/brochure.pdf`;
+  const dimensions = jpegDimensions(imageBuffer) || dimensionsFromSize(template.size);
+  const pdfBuffer = createPdfWithJpeg(imageBuffer, {
+    imageWidth: dimensions.width,
+    imageHeight: dimensions.height,
+    pageWidth: template.page.width,
+    pageHeight: template.page.height,
+    title: template.title
+  });
+
+  const imagePath = tempFilePath(`${materialId}-image.jpg`);
+  const pdfPath = tempFilePath(`${materialId}-brochure.pdf`);
+  await writeFile(imagePath, imageBuffer);
+  await writeFile(pdfPath, pdfBuffer);
+  try {
+    await putFileToObjectStorage(imagePath, imageStorageKey, "image/jpeg");
+    await putFileToObjectStorage(pdfPath, pdfStorageKey, "application/pdf");
+  } finally {
+    await rm(imagePath, { force: true });
+    await rm(pdfPath, { force: true });
+  }
+
+  const material = {
+    id: materialId,
+    accountId: account.id,
+    appAccountToken: account.appAccountToken,
+    templateId,
+    templateTitle: template.title,
+    imageStorageKey,
+    pdfStorageKey,
+    promptPreview: prompt.slice(0, 1400),
+    model: config.openAiImageModel,
+    referenceFileName: reference?.fileName || null,
+    createdAt: now
+  };
+  const db = readDb();
+  db.materials.unshift(material);
+  writeDb(db);
+
+  return sendJson(res, 201, await publicMaterial(material));
+}
+
+function normalizeMaterialTemplateId(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (MATERIAL_TEMPLATES[text]) return text;
+  if (text.includes("business") || text.includes("名片")) return "business-card";
+  if (text.includes("profile") || text.includes("个人")) return "agent-profile";
+  if (text.includes("listed") || text.includes("传单")) return "just-listed";
+  if (text.includes("open house") || text.includes("开放") || text.includes("邀请")) return "open-house";
+  return "";
+}
+
+function buildMaterialPrompt({ templateId, template, body, reference }) {
+  const agent = asRecord(body.agent) || {};
+  const property = asRecord(body.property) || {};
+  const styleInstructions = compactText(body.styleInstructions, 800);
+  const agentLines = [
+    promptLine("Agent name", agent.name),
+    promptLine("Agent title", agent.title),
+    promptLine("Brokerage/company", agent.company),
+    promptLine("Phone", agent.phone),
+    promptLine("Email", agent.email),
+    promptLine("Website", agent.website),
+    promptLine("WeChat", agent.wechat),
+    promptLine("License", agent.license)
+  ].filter(Boolean);
+  const propertyLines = [
+    promptLine("Property address", property.address),
+    promptLine("Price", property.price),
+    promptLine("Property facts", property.facts),
+    promptLine("Highlights/notes", property.note),
+    promptLine("Open house/event time", property.eventTime)
+  ].filter(Boolean);
+
+  return [
+    "You are an expert North American real estate marketing designer.",
+    template.prompt,
+    "Output exactly one finished flat design, not a mockup photo, not a collage of multiple concepts.",
+    "Use a print-ready composition with sharp readable text, strong spacing, and professional hierarchy.",
+    "All visible text must use only the factual details below. Preserve phone numbers, emails, websites, addresses, license numbers, and prices exactly as written. Do not invent missing information.",
+    "Avoid tiny text, distorted letters, fake badges, fake awards, fake logos, MLS/REALTOR trademarks, watermarks, AI labels, placeholder lorem ipsum, or unrelated decorative clutter.",
+    reference ? `Reference material: ${reference.fileName}. Borrow only broad visual direction such as spacing, color mood, and typography feel. Do not copy the reference exactly.` : "",
+    styleInstructions ? `User style direction: ${styleInstructions}` : "",
+    "",
+    `Template id: ${templateId}`,
+    "Agent information:",
+    agentLines.length ? agentLines.join("\n") : "- No agent information supplied.",
+    "",
+    "Property/event information:",
+    propertyLines.length ? propertyLines.join("\n") : "- No property information supplied.",
+    "",
+    "Final review requirement: make the design polished enough for an agent to review and share, while keeping all factual text conservative and verifiable."
+  ].filter(line => line !== "").join("\n");
+}
+
+function promptLine(label, value) {
+  const text = compactText(value, 700);
+  return text ? `- ${label}: ${text}` : "";
+}
+
+function compactText(value, maxLength = 280) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function readMaterialReference(referenceValue) {
+  const reference = asRecord(referenceValue);
+  if (!reference) return null;
+  const fileName = compactText(reference.fileName, 160) || "reference.jpg";
+  const contentType = compactText(reference.contentType, 80).toLowerCase();
+  const encoded = firstNonEmpty(reference.base64Data, reference.data);
+  if (!encoded) return { fileName, contentType, buffer: null };
+  if (!["image/jpeg", "image/jpg", "image/png", "image/webp"].includes(contentType)) {
+    throw Object.assign(new Error("Reference image must be JPEG, PNG, or WebP."), { status: 400 });
+  }
+  const raw = String(encoded).includes(",") ? String(encoded).split(",").pop() : String(encoded);
+  let buffer;
+  try {
+    buffer = Buffer.from(raw, "base64");
+  } catch {
+    throw Object.assign(new Error("Reference image is not valid base64."), { status: 400 });
+  }
+  if (!buffer.length || buffer.length > 18 * 1024 * 1024) {
+    throw Object.assign(new Error("Reference image must be smaller than 18MB."), { status: 413 });
+  }
+  return { fileName, contentType: contentType === "image/jpg" ? "image/jpeg" : contentType, buffer };
+}
+
+async function createOpenAiImageGeneration({ prompt, template, user }) {
+  const body = {
+    model: config.openAiImageModel,
+    prompt,
+    n: 1,
+    size: template.size,
+    quality: config.openAiImageQuality,
+    output_format: "jpeg",
+    user
+  };
+  const response = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.openAiApiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+  return parseOpenAiImageResponse(response);
+}
+
+async function createOpenAiImageEdit({ prompt, template, reference, user }) {
+  const form = new FormData();
+  form.append("model", config.openAiImageModel);
+  form.append("prompt", prompt);
+  form.append("size", template.size);
+  form.append("quality", config.openAiImageQuality);
+  form.append("output_format", "jpeg");
+  form.append("user", user);
+  form.append("image[]", new Blob([reference.buffer], { type: reference.contentType }), reference.fileName);
+  const response = await fetch("https://api.openai.com/v1/images/edits", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.openAiApiKey}`,
+      Accept: "application/json"
+    },
+    body: form
+  });
+  return parseOpenAiImageResponse(response);
+}
+
+async function parseOpenAiImageResponse(response) {
+  const text = await response.text();
+  let parsed = {};
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    parsed = {};
+  }
+  if (!response.ok) {
+    const message = parsed.error?.message || text || `OpenAI image request failed: ${response.status}`;
+    throw Object.assign(new Error(message), { status: response.status });
+  }
+  const image = Array.isArray(parsed.data) ? parsed.data[0] : null;
+  if (image?.b64_json) return Buffer.from(image.b64_json, "base64");
+  if (image?.url) {
+    const imageResponse = await fetch(image.url);
+    if (!imageResponse.ok) throw Object.assign(new Error(`OpenAI image download failed: ${imageResponse.status}`), { status: 502 });
+    return Buffer.from(await imageResponse.arrayBuffer());
+  }
+  throw Object.assign(new Error("OpenAI image response did not include an image."), { status: 502 });
+}
+
+function createPdfWithJpeg(imageBuffer, options) {
+  const pageWidth = Number(options.pageWidth || 612);
+  const pageHeight = Number(options.pageHeight || 792);
+  const imageWidth = Number(options.imageWidth || 1024);
+  const imageHeight = Number(options.imageHeight || 1536);
+  const scale = Math.min(pageWidth / imageWidth, pageHeight / imageHeight);
+  const drawWidth = imageWidth * scale;
+  const drawHeight = imageHeight * scale;
+  const drawX = (pageWidth - drawWidth) / 2;
+  const drawY = (pageHeight - drawHeight) / 2;
+  const content = [
+    "q",
+    "1 1 1 rg",
+    `0 0 ${formatPdfNumber(pageWidth)} ${formatPdfNumber(pageHeight)} re f`,
+    `${formatPdfNumber(drawWidth)} 0 0 ${formatPdfNumber(drawHeight)} ${formatPdfNumber(drawX)} ${formatPdfNumber(drawY)} cm`,
+    "/Im0 Do",
+    "Q"
+  ].join("\n");
+
+  const objects = [
+    pdfTextObject(`<< /Type /Catalog /Pages 2 0 R >>`),
+    pdfTextObject(`<< /Type /Pages /Kids [3 0 R] /Count 1 >>`),
+    pdfTextObject(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${formatPdfNumber(pageWidth)} ${formatPdfNumber(pageHeight)}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`),
+    pdfStreamObject(`<< /Type /XObject /Subtype /Image /Width ${Math.round(imageWidth)} /Height ${Math.round(imageHeight)} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imageBuffer.length} >>`, imageBuffer),
+    pdfStreamObject(`<< /Length ${Buffer.byteLength(content)} >>`, Buffer.from(content))
+  ];
+  return buildPdf(objects);
+}
+
+function pdfTextObject(text) {
+  return Buffer.from(`${text}\n`);
+}
+
+function pdfStreamObject(dictionary, stream) {
+  return Buffer.concat([
+    Buffer.from(`${dictionary}\nstream\n`),
+    stream,
+    Buffer.from("\nendstream\n")
+  ]);
+}
+
+function buildPdf(objects) {
+  const chunks = [Buffer.from("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n", "binary")];
+  const offsets = [0];
+  let offset = chunks[0].length;
+  objects.forEach((object, index) => {
+    offsets.push(offset);
+    const header = Buffer.from(`${index + 1} 0 obj\n`);
+    const footer = Buffer.from("endobj\n");
+    chunks.push(header, object, footer);
+    offset += header.length + object.length + footer.length;
+  });
+  const xrefOffset = offset;
+  const xrefRows = [`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`];
+  for (let index = 1; index < offsets.length; index += 1) {
+    xrefRows.push(`${String(offsets[index]).padStart(10, "0")} 00000 n \n`);
+  }
+  chunks.push(Buffer.from(xrefRows.join("")));
+  chunks.push(Buffer.from(`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`));
+  return Buffer.concat(chunks);
+}
+
+function formatPdfNumber(value) {
+  return Number(value).toFixed(2).replace(/\.00$/, "");
+}
+
+function isJpegBuffer(buffer) {
+  return Buffer.isBuffer(buffer) && buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8;
+}
+
+function jpegDimensions(buffer) {
+  if (!isJpegBuffer(buffer)) return null;
+  let offset = 2;
+  while (offset + 9 < buffer.length) {
+    if (buffer[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = buffer[offset + 1];
+    const length = buffer.readUInt16BE(offset + 2);
+    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+      return {
+        height: buffer.readUInt16BE(offset + 5),
+        width: buffer.readUInt16BE(offset + 7)
+      };
+    }
+    if (!Number.isFinite(length) || length < 2) break;
+    offset += 2 + length;
+  }
+  return null;
+}
+
+function dimensionsFromSize(size) {
+  const match = String(size || "").match(/^(\d+)x(\d+)$/);
+  if (!match) return { width: 1024, height: 1536 };
+  return { width: Number(match[1]), height: Number(match[2]) };
+}
+
+async function publicMaterial(material) {
+  return {
+    id: material.id,
+    templateId: material.templateId,
+    templateTitle: material.templateTitle,
+    imageUrl: await createReadableObjectUrl(material.imageStorageKey),
+    pdfUrl: await createReadableObjectUrl(material.pdfStorageKey),
+    promptPreview: material.promptPreview,
+    model: material.model,
+    referenceFileName: material.referenceFileName,
+    createdAt: material.createdAt
+  };
 }
 
 function getRequiredAccount(req, res, fallbackToken = "") {
@@ -1624,6 +2000,7 @@ function productionReadinessReport() {
       && runningHub.inputNodeId
       && runningHub.inputField
   );
+  const materialGenerationReady = Boolean(config.openAiApiKey && config.openAiImageModel);
   const checks = [
     {
       key: "publicApiBaseUrl",
@@ -1639,6 +2016,11 @@ function productionReadinessReport() {
       key: "aiProcessing",
       label: "Cloud AI processing",
       ok: !config.runningHubMock && aiProcessingReady
+    },
+    {
+      key: "materialGeneration",
+      label: "AI marketing material generation",
+      ok: materialGenerationReady
     },
     {
       key: "appleBundleId",
@@ -1673,6 +2055,7 @@ function productionReadinessReport() {
     modes: {
       storage: config.r2Mock ? "mock" : "cloud",
       aiProcessing: config.runningHubMock ? "mock" : "cloud",
+      materialGeneration: materialGenerationReady ? "cloud" : "not_configured",
       iapValidation: config.iapValidationMode
     },
     checks
@@ -1747,6 +2130,13 @@ function ensureRunningHubConfigured(runningHubConfig = getRunningHubConfig()) {
     if (!runningHubConfig[key]) missing.push(key);
   }
   if (missing.length) throw Object.assign(new Error(`RunningHub is not configured: ${missing.join(", ")}`), { status: 500 });
+}
+
+function ensureOpenAiConfigured() {
+  const missing = [];
+  if (!config.openAiApiKey) missing.push("OPENAI_API_KEY");
+  if (!config.openAiImageModel) missing.push("OPENAI_IMAGE_MODEL");
+  if (missing.length) throw Object.assign(new Error(`AI material generation is not configured: ${missing.join(", ")}`), { status: 503 });
 }
 
 function extensionFor(fileName, contentType) {

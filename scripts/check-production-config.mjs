@@ -50,6 +50,9 @@ if (boolEnv("RUNNINGHUB_MOCK", true)) {
   requireValue("AI_INPUT_FIELD", runningHub.inputField, "Input field is required.");
 }
 
+requireValue("OPENAI_API_KEY", env("OPENAI_API_KEY", env("AI_IMAGE_API_KEY")), "AI marketing material generation key is required.");
+requireValue("OPENAI_IMAGE_MODEL", env("OPENAI_IMAGE_MODEL", env("AI_IMAGE_MODEL", "gpt-image-2")), "Set the image generation model, for example gpt-image-2.");
+
 const adminEmails = env("ADMIN_EMAILS", env("METROVAN_ADMIN_EMAILS"))
   .split(",")
   .map(value => value.trim().toLowerCase())
