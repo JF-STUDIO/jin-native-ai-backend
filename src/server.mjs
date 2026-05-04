@@ -817,6 +817,7 @@ async function generateMarketingMaterial(req, res) {
 
   const imagePath = tempFilePath(`${materialId}-image.jpg`);
   const pdfPath = tempFilePath(`${materialId}-brochure.pdf`);
+  await mkdir(path.dirname(imagePath), { recursive: true });
   await writeFile(imagePath, imageBuffer);
   await writeFile(pdfPath, pdfBuffer);
   try {
